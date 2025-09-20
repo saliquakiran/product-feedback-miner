@@ -76,6 +76,13 @@ class WorkflowExecution:
     error_message: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     step_results: Dict[str, AgentResult] = field(default_factory=dict)
+    
+    @property
+    def progress(self) -> float:
+        """Calculate progress percentage."""
+        if self.steps_total == 0:
+            return 0.0
+        return (self.steps_completed / self.steps_total) * 100.0
 
 @dataclass
 class WorkflowConfig:
@@ -506,7 +513,7 @@ class WorkflowEngine:
                     status=execution.status.value,
                     started_at=execution.started_at,
                     completed_at=execution.completed_at,
-                    execution_time=execution.total_duration,
+                    duration_seconds=execution.total_duration,
                     items_processed=execution.steps_completed,
                     items_successful=execution.steps_completed,
                     items_failed=execution.steps_failed,

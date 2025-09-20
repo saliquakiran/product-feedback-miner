@@ -2,6 +2,10 @@ import os
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 class Environment(str, Enum):
     DEVELOPMENT = "development"

@@ -20,6 +20,7 @@ from orchestration.state import StateManager
 from database import get_session
 from database.models import ProcessedDocument, Cluster, Ticket
 from api.server import app
+from sqlalchemy import text
 import uvicorn
 
 # Configure logging
@@ -289,7 +290,7 @@ def health():
             # Check database
             try:
                 with get_session() as session:
-                    session.execute("SELECT 1")
+                    session.execute(text("SELECT 1"))
                 click.echo("  ✅ Database: Connected")
             except Exception as e:
                 click.echo(f"  ❌ Database: Error - {e}")

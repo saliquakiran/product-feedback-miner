@@ -49,7 +49,7 @@ class NormalizerAgent(BaseAgent):
         self.batch_size = self.config.get("batch_size", 50)
         self.enable_pii_scrubbing = self.config.get("enable_pii_scrubbing", True)
         self.enable_deduplication = self.config.get("enable_deduplication", True)
-        self.enable_language_filtering = self.config.get("enable_language_filtering", True)
+        self.enable_language_filtering = self.config.get("enable_language_filtering", False)
         self.target_language = self.config.get("target_language", "en")
         self.min_word_count = self.config.get("min_word_count", 5)
         self.max_word_count = self.config.get("max_word_count", 10000)
@@ -99,6 +99,7 @@ class NormalizerAgent(BaseAgent):
                 self.logger.info(f"Processed batch {i//self.batch_size + 1}/{(len(raw_items) + self.batch_size - 1)//self.batch_size}")
             
             # Deduplication (if enabled)
+            dedup_results = {'duplicate_count': 0}  # Default value
             if self.enable_deduplication and processed_items:
                 self.logger.info("Running deduplication")
                 dedup_results = self.deduplicator.find_duplicates(processed_items)

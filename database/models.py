@@ -111,6 +111,9 @@ class ProcessedDocument(Base):
     # Embedding for clustering
     embedding = Column(Vector(1536))  # OpenAI embedding dimension
     
+    # Clustering
+    cluster_id = Column(UUID(as_uuid=True), ForeignKey('clusters.id'), nullable=True)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

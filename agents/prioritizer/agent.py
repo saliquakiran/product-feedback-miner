@@ -110,8 +110,8 @@ class PrioritizerAgent(BaseAgent):
 
             # Process items in batches
             for i in range(0, total_items, self.batch_size):
-                batch = feedback_items[i:i + self.batch_size]
-                batch_result = await self._process_batch(batch)
+                batch_ids = feedback_items[i:i + self.batch_size]
+                batch_result = await self._process_batch(batch_ids)
                 
                 successful_items += batch_result["successful"]
                 failed_items += batch_result["failed"]
@@ -158,11 +158,11 @@ class PrioritizerAgent(BaseAgent):
         """Get list of agent names that this agent depends on for input."""
         return ["classifier", "clusterer"]  # Depends on both Classifier and Clusterer Agents
 
-    async def _get_feedback_for_prioritization(self) -> List[ProcessedDocument]:
-        """Get processed documents that need prioritization."""
+    async def _get_feedback_for_prioritization(self) -> List[str]:
+        """Get processed document IDs that need prioritization."""
         with get_session() as session:
-            # Fetch documents that have been classified but not yet prioritized
-            documents = session.query(ProcessedDocument).filter(
+            # Fetch document IDs that have been classified but not yet prioritized
+            document_ids = session.query(ProcessedDocument.id).filter(
                 ProcessedDocument.feedback_type.isnot(None),  # Must be classified
                 ProcessedDocument.processing_status == ProcessingStatus.COMPLETED,
                 ~ProcessedDocument.id.in_(
@@ -170,41 +170,51 @@ class PrioritizerAgent(BaseAgent):
                 )  # Not yet prioritized
             ).limit(self.max_items).all()
             
-            return documents
+            # Return just the IDs as strings
+            return [str(doc_id[0]) for doc_id in document_ids]
 
-    async def _process_batch(self, documents: List[ProcessedDocument]) -> Dict[str, int]:
+    async def _process_batch(self, document_ids: List[str]) -> Dict[str, int]:
         """Process a batch of documents for prioritization."""
         try:
             scores_created = 0
             
-            for document in documents:
-                # Get cluster data if document is clustered
-                cluster_data = await self._get_cluster_data(document)
-                
-                # Prepare feedback data for scoring
-                feedback_data = self._prepare_feedback_data(document, cluster_data)
-                
-                # Calculate priority score
-                priority_score = self.calculator.calculate_priority(feedback_data, cluster_data)
-                
-                # Store priority score
-                await self._store_priority_score(document.id, priority_score)
-                scores_created += 1
+            with get_session() as session:
+                for doc_id in document_ids:
+                    # Fetch the document within the session
+                    document = session.query(ProcessedDocument).filter(
+                        ProcessedDocument.id == doc_id
+                    ).first()
+                    
+                    if not document:
+                        continue
+                    
+                    # Get cluster data if document is clustered
+                    cluster_data = await self._get_cluster_data(document)
+                    
+                    # Prepare feedback data for scoring
+                    feedback_data = self._prepare_feedback_data(document, cluster_data)
+                    
+                    # Calculate priority score
+                    priority_score = self.calculator.calculate_priority(feedback_data, cluster_data)
+                    
+                    # Store priority score
+                    await self._store_priority_score(document.id, priority_score)
+                    scores_created += 1
 
             return {
-                "successful": len(documents),
+                "successful": len(document_ids),
                 "failed": 0,
                 "scores_created": scores_created
             }
 
         except Exception as e:
             self.logger.error(f"Failed to process batch: {e}")
-            return {"successful": 0, "failed": len(documents), "scores_created": 0}
+            return {"successful": 0, "failed": len(document_ids), "scores_created": 0}
 
     async def _get_cluster_data(self, document: ProcessedDocument) -> Optional[Dict]:
         """Get cluster data for a document."""
         try:
-            with self.get_db_session() as session:
+            with get_session() as session:
                 # Find cluster membership
                 membership = session.query(ClusterMembership).filter(
                     ClusterMembership.document_id == document.id
@@ -275,7 +285,7 @@ class PrioritizerAgent(BaseAgent):
             "id": str(document.id),
             "title": document.title,
             "body": document.body,
-            "severity": document.feedback_type.value if document.feedback_type else "low",
+            "severity": document.feedback_type.value if hasattr(document.feedback_type, 'value') else str(document.feedback_type) if document.feedback_type else "low",
             "component": document.component or "other",
             "timestamp": document.timestamp,
             "author": document.author,
@@ -340,7 +350,7 @@ class PrioritizerAgent(BaseAgent):
     async def _store_priority_score(self, document_id: str, priority_score: PriorityScore):
         """Store priority score in the database."""
         try:
-            with self.get_db_session() as session:
+            with get_session() as session:
                 # Check if score already exists
                 existing_score = session.query(PrioritizationScore).filter(
                     PrioritizationScore.document_id == document_id
@@ -391,7 +401,7 @@ class PrioritizerAgent(BaseAgent):
     async def _generate_rankings(self) -> List[Dict]:
         """Generate priority rankings."""
         try:
-            with self.get_db_session() as session:
+            with get_session() as session:
                 # Get all priority scores ordered by priority score
                 scores = session.query(PrioritizationScore).order_by(
                     PrioritizationScore.priority_score.desc()
@@ -424,7 +434,7 @@ class PrioritizerAgent(BaseAgent):
     def _get_priority_distribution(self) -> Dict[str, int]:
         """Get distribution of priority levels."""
         try:
-            with self.get_db_session() as session:
+            with get_session() as session:
                 # Count scores by priority level
                 distribution = {}
                 for level in PriorityLevel:
@@ -442,7 +452,7 @@ class PrioritizerAgent(BaseAgent):
     async def get_prioritization_stats(self) -> Dict[str, Any]:
         """Get prioritization statistics."""
         try:
-            with self.get_db_session() as session:
+            with get_session() as session:
                 # Get total scores
                 total_scores = session.query(PrioritizationScore).count()
                 

@@ -13,13 +13,14 @@ import argparse
 from pathlib import Path
 
 # Add project root to Python path
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from database import db_manager, create_tables, enable_pgvector, create_vector_indexes
+from config.database import db_manager, create_tables, enable_pgvector, create_vector_indexes
 from database.models import Base, SystemConfig
 from config.settings import config
 from utils.logging import setup_logging
+from sqlalchemy import text
 import logging
 
 logger = logging.getLogger(__name__)
@@ -158,13 +159,13 @@ async def verify_setup():
             ]
             
             for table in tables_to_check:
-                result = session.execute(f"SELECT COUNT(*) FROM {table}")
+                result = session.execute(text(f"SELECT COUNT(*) FROM {table}"))
                 count = result.scalar()
                 logger.info(f"Table {table}: {count} records")
         
         # Check pgvector extension
         with db_manager.get_session() as session:
-            result = session.execute("SELECT extname FROM pg_extension WHERE extname = 'vector'")
+            result = session.execute(text("SELECT extname FROM pg_extension WHERE extname = 'vector'"))
             if not result.fetchone():
                 logger.error("pgvector extension not found")
                 return False

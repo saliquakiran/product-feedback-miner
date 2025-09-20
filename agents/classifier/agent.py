@@ -281,12 +281,18 @@ class ClassifierAgent(BaseAgent):
             # Parse response
             content = response.choices[0].message.content.strip()
             
-            # Extract JSON from response
+            # Extract JSON from response with better error handling
             json_start = content.find('{')
             json_end = content.rfind('}') + 1
             if json_start != -1 and json_end > json_start:
                 json_content = content[json_start:json_end]
-                classification = json.loads(json_content)
+                try:
+                    classification = json.loads(json_content)
+                except json.JSONDecodeError as e:
+                    self.logger.warning(f"JSON decode error: {e}. Content: {json_content[:200]}...")
+                    # Try to fix common JSON issues
+                    json_content = self._fix_json_content(json_content)
+                    classification = json.loads(json_content)
             else:
                 raise ValueError("No valid JSON found in OpenAI response")
             
@@ -301,10 +307,10 @@ class ClassifierAgent(BaseAgent):
     def _parse_classification_result(self, classification: Dict[str, Any], document: Dict[str, Any]) -> Optional[ClassificationResult]:
         """Parse OpenAI response into ClassificationResult."""
         try:
-            # Extract and validate classification data
-            feedback_type = FeedbackType(classification.get('feedback_type', 'other'))
-            severity_level = SeverityLevel(classification.get('severity_level', 'medium'))
-            component = ComponentType(classification.get('component', 'other'))
+            # Extract and validate classification data with fallbacks
+            feedback_type = self._parse_feedback_type(classification.get('feedback_type', 'other'))
+            severity_level = self._parse_severity_level(classification.get('severity_level', 'medium'))
+            component = self._parse_component_type(classification.get('component', 'other'))
             
             # Extract confidence scores
             type_confidence = float(classification.get('type_confidence', 0.5))
@@ -344,6 +350,121 @@ class ClassifierAgent(BaseAgent):
         except Exception as e:
             self.logger.error(f"Failed to parse classification result: {e}")
             return None
+    
+    def _parse_feedback_type(self, value: str) -> FeedbackType:
+        """Parse feedback type with intelligent fallbacks."""
+        if not value:
+            return FeedbackType.OTHER
+        
+        value = value.lower().strip()
+        
+        # Direct mapping
+        if value in [ft.value for ft in FeedbackType]:
+            return FeedbackType(value)
+        
+        # Fuzzy matching
+        if 'bug' in value or 'error' in value or 'issue' in value:
+            return FeedbackType.BUG
+        elif 'feature' in value or 'request' in value or 'enhancement' in value:
+            return FeedbackType.FEATURE_REQUEST
+        elif 'ux' in value or 'ui' in value or 'interface' in value or 'design' in value:
+            return FeedbackType.UX
+        elif 'price' in value or 'cost' in value or 'billing' in value:
+            return FeedbackType.PRICING
+        elif 'doc' in value or 'help' in value or 'guide' in value:
+            return FeedbackType.DOCS
+        elif 'performance' in value or 'speed' in value or 'slow' in value:
+            return FeedbackType.PERFORMANCE
+        elif 'security' in value or 'secure' in value or 'vulnerability' in value:
+            return FeedbackType.SECURITY
+        elif 'integration' in value or 'api' in value or 'connect' in value:
+            return FeedbackType.INTEGRATION
+        else:
+            return FeedbackType.OTHER
+    
+    def _parse_severity_level(self, value: str) -> SeverityLevel:
+        """Parse severity level with intelligent fallbacks."""
+        if not value:
+            return SeverityLevel.MEDIUM
+        
+        value = value.lower().strip()
+        
+        # Direct mapping
+        if value in [sl.value for sl in SeverityLevel]:
+            return SeverityLevel(value)
+        
+        # Fuzzy matching
+        if 'critical' in value or 'urgent' in value or 'emergency' in value:
+            return SeverityLevel.CRITICAL
+        elif 'high' in value or 'important' in value:
+            return SeverityLevel.HIGH
+        elif 'medium' in value or 'normal' in value or 'moderate' in value:
+            return SeverityLevel.MEDIUM
+        elif 'low' in value or 'minor' in value:
+            return SeverityLevel.LOW
+        elif 'minimal' in value or 'trivial' in value:
+            return SeverityLevel.MINIMAL
+        else:
+            return SeverityLevel.MEDIUM
+    
+    def _parse_component_type(self, value: str) -> ComponentType:
+        """Parse component type with intelligent fallbacks."""
+        if not value:
+            return ComponentType.OTHER
+        
+        value = value.lower().strip()
+        
+        # Direct mapping
+        if value in [ct.value for ct in ComponentType]:
+            return ComponentType(value)
+        
+        # Fuzzy matching
+        if 'auth' in value or 'login' in value or 'password' in value:
+            return ComponentType.AUTHENTICATION
+        elif 'ui' in value or 'interface' in value or 'frontend' in value:
+            return ComponentType.UI
+        elif 'api' in value or 'endpoint' in value:
+            return ComponentType.API
+        elif 'database' in value or 'db' in value or 'data' in value:
+            return ComponentType.DATABASE
+        elif 'payment' in value or 'billing' in value or 'checkout' in value:
+            return ComponentType.PAYMENT
+        elif 'notification' in value or 'alert' in value or 'email' in value:
+            return ComponentType.NOTIFICATIONS
+        elif 'search' in value or 'find' in value:
+            return ComponentType.SEARCH
+        elif 'dashboard' in value or 'home' in value:
+            return ComponentType.DASHBOARD
+        elif 'setting' in value or 'config' in value or 'preference' in value:
+            return ComponentType.SETTINGS
+        elif 'mobile' in value or 'phone' in value or 'app' in value:
+            return ComponentType.MOBILE
+        elif 'desktop' in value or 'pc' in value:
+            return ComponentType.DESKTOP
+        elif 'integration' in value or 'connect' in value:
+            return ComponentType.INTEGRATION
+        elif 'security' in value or 'secure' in value:
+            return ComponentType.SECURITY
+        elif 'performance' in value or 'speed' in value:
+            return ComponentType.PERFORMANCE
+        else:
+            return ComponentType.OTHER
+    
+    def _fix_json_content(self, json_content: str) -> str:
+        """Fix common JSON issues in OpenAI responses."""
+        import re
+        
+        # Remove trailing commas before closing braces/brackets
+        json_content = re.sub(r',(\s*[}\]])', r'\1', json_content)
+        
+        # Fix single quotes to double quotes
+        json_content = re.sub(r"'([^']*)':", r'"\1":', json_content)
+        json_content = re.sub(r":\s*'([^']*)'", r': "\1"', json_content)
+        
+        # Fix unescaped quotes in strings
+        json_content = re.sub(r'([^\\])"([^"]*)"([^"]*)"', r'\1"\2\3"', json_content)
+        
+        return json_content
     
     async def _store_classification_result(self, result: ClassificationResult) -> None:
         """Store classification result in the database."""

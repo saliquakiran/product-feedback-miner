@@ -201,7 +201,7 @@ class ActionerAgent(BaseAgent):
     async def _get_high_priority_items(self) -> List[Dict[str, Any]]:
         """Get high-priority feedback items that need tickets created."""
         try:
-            with self.get_db_session() as session:
+            with get_session() as session:
                 # Query for high-priority items without existing tickets
                 query = session.query(
                     ProcessedDocument,
@@ -212,7 +212,7 @@ class ActionerAgent(BaseAgent):
                 ).outerjoin(
                     Cluster, ProcessedDocument.cluster_id == Cluster.id
                 ).outerjoin(
-                    Ticket, ProcessedDocument.id == Ticket.document_id
+                    Ticket, ProcessedDocument.id == Ticket.source_document_id
                 ).filter(
                     PrioritizationScore.priority_score >= self.actioner_config.priority_threshold,
                     Ticket.id.is_(None)  # No existing ticket
@@ -343,7 +343,7 @@ class ActionerAgent(BaseAgent):
     async def _store_ticket_record(self, item: Dict[str, Any], ticket_result: TicketResult):
         """Store ticket record in the database."""
         try:
-            with self.get_db_session() as session:
+            with get_session() as session:
                 # Create ticket record
                 ticket = Ticket(
                     id=uuid.uuid4(),
@@ -406,7 +406,7 @@ class ActionerAgent(BaseAgent):
     async def get_ticket_statistics(self) -> Dict[str, Any]:
         """Get statistics about created tickets."""
         try:
-            with self.get_db_session() as session:
+            with get_session() as session:
                 # Count tickets by platform
                 platform_counts = {}
                 for platform in PlatformType:
@@ -467,7 +467,7 @@ class ActionerAgent(BaseAgent):
             
             if success:
                 # Update in database
-                with self.get_db_session() as session:
+                with get_session() as session:
                     ticket = session.query(Ticket).filter(
                         Ticket.external_id == ticket_id,
                         Ticket.platform == platform
