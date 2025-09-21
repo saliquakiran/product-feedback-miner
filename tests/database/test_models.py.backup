@@ -1,0 +1,429 @@
+#!/usr/bin/env python3
+"""
+Tests for database models.
+
+This module tests all database models including:
+- RawFeedback, ProcessedDocument, Cluster, ClusterMembership
+- PrioritizationScore, Ticket, FeedbackLoopData, AgentExecution
+- SystemConfig, DigestReport
+"""
+
+import pytest
+from datetime import datetime
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+# Add project root to path
+import sys
+from pathlib import Path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+from database.models import (
+    Base, RawFeedback, ProcessedDocument, Cluster, ClusterMembership,
+    PrioritizationScore, Ticket, FeedbackLoopData, AgentExecution,
+    SystemConfig, DigestReport, FeedbackType, PriorityLevel, SourceType,
+    ProcessingStatus, TicketStatus
+)
+
+# Test database URL
+TEST_DATABASE_URL = "sqlite:///:memory:"
+
+@pytest.fixture
+def test_engine():
+    """Create test database engine."""
+    engine = create_engine(TEST_DATABASE_URL, echo=False)
+    Base.metadata.create_all(engine)
+    return engine
+
+@pytest.fixture
+def test_session(test_engine):
+    """Create test database session."""
+    Session = sessionmaker(bind=test_engine)
+    session = Session()
+    yield session
+    session.close()
+
+class TestRawFeedback:
+    """Tests for RawFeedback model."""
+    
+    def test_raw_feedback_creation(self, test_session):
+        """Test RawFeedback model creation and validation."""
+        feedback = RawFeedback(
+            source_type=SourceType.GITHUB_ISSUE,
+            source_id="12345",
+            url="https://github.com/user/repo/issues/123",
+            title="Test Issue",
+            content="This is a test issue",
+            author="testuser",
+            timestamp=datetime.utcnow(),
+            raw_metadata={"labels": ["bug"], "assignee": "dev"}
+        )
+        
+        test_session.add(feedback)
+        test_session.commit()
+        
+        assert feedback.id is not None
+        assert feedback.source_type == SourceType.GITHUB_ISSUE
+        assert feedback.raw_metadata == {"labels": ["bug"], "assignee": "dev"}
+        assert feedback.title == "Test Issue"
+        assert feedback.author == "testuser"
+    
+    def test_raw_feedback_required_fields(self, test_session):
+        """Test that required fields are properly validated."""
+        # Test with minimal required fields
+        feedback = RawFeedback(
+            source_type=SourceType.GITHUB_ISSUE,
+            source_id="12345",
+            url="https://github.com/user/repo/issues/123",
+            content="Test content",
+            timestamp=datetime.utcnow()
+        )
+        
+        test_session.add(feedback)
+        test_session.commit()
+        
+        assert feedback.id is not None
+        assert feedback.source_type == SourceType.GITHUB_ISSUE
+        assert feedback.source_id == "12345"
+
+class TestProcessedDocument:
+    """Tests for ProcessedDocument model."""
+    
+    def test_processed_document_creation(self, test_session):
+        """Test ProcessedDocument model creation."""
+        # Create parent RawFeedback
+        raw_feedback = RawFeedback(
+            source_type=SourceType.GITHUB_ISSUE,
+            source_id="12345",
+            url="https://github.com/user/repo/issues/123",
+            content="Test content",
+            timestamp=datetime.utcnow()
+        )
+        test_session.add(raw_feedback)
+        test_session.commit()
+        
+        # Create ProcessedDocument
+        processed_doc = ProcessedDocument(
+            raw_feedback_id=raw_feedback.id,
+            title="Processed Title",
+            body="Processed body content",
+            author="testuser",
+            timestamp=datetime.utcnow(),
+            url="https://github.com/user/repo/issues/123",
+            feedback_type=FeedbackType.BUG,
+            severity_score=0.8,
+            component="authentication",
+            confidence_score=0.95
+        )
+        
+        test_session.add(processed_doc)
+        test_session.commit()
+        
+        assert processed_doc.id is not None
+        assert processed_doc.raw_feedback == raw_feedback
+        assert processed_doc.feedback_type == FeedbackType.BUG
+        assert processed_doc.severity_score == 0.8
+        assert processed_doc.component == "authentication"
+    
+    def test_processed_document_relationship(self, test_session):
+        """Test ProcessedDocument relationship with RawFeedback."""
+        raw_feedback = RawFeedback(
+            source_type=SourceType.GITHUB_ISSUE,
+            source_id="12345",
+            url="https://github.com/user/repo/issues/123",
+            content="Test content",
+            timestamp=datetime.utcnow()
+        )
+        test_session.add(raw_feedback)
+        test_session.commit()
+        
+        processed_doc = ProcessedDocument(
+            raw_feedback_id=raw_feedback.id,
+            title="Test Document",
+            body="Test body",
+            author="testuser",
+            timestamp=datetime.utcnow(),
+            url="https://github.com/user/repo/issues/123"
+        )
+        test_session.add(processed_doc)
+        test_session.commit()
+        
+        # Test relationship
+        assert processed_doc.raw_feedback == raw_feedback
+        assert processed_doc in raw_feedback.processed_documents
+
+class TestCluster:
+    """Tests for Cluster model."""
+    
+    def test_cluster_creation(self, test_session):
+        """Test Cluster model creation."""
+        cluster = Cluster(
+            title="Login Issues Cluster",
+            summary="Users experiencing login problems",
+            feedback_type=FeedbackType.BUG,
+            component="authentication",
+            avg_severity=0.85,
+            member_count=5
+        )
+        
+        test_session.add(cluster)
+        test_session.commit()
+        
+        assert cluster.id is not None
+        assert cluster.title == "Login Issues Cluster"
+        assert cluster.avg_severity == 0.85
+        assert cluster.member_count == 5
+        assert cluster.feedback_type == FeedbackType.BUG
+
+class TestClusterMembership:
+    """Tests for ClusterMembership model and relationships."""
+    
+    def test_cluster_membership_creation(self, test_session):
+        """Test ClusterMembership model creation."""
+        # Create cluster
+        cluster = Cluster(title="Test Cluster", summary="Test summary")
+        test_session.add(cluster)
+        test_session.commit()
+        
+        # Create raw feedback and processed document
+        raw_feedback = RawFeedback(
+            source_type=SourceType.GITHUB_ISSUE,
+            source_id="12345",
+            url="https://github.com/user/repo/issues/123",
+            content="Test content",
+            timestamp=datetime.utcnow()
+        )
+        test_session.add(raw_feedback)
+        test_session.commit()
+        
+        processed_doc = ProcessedDocument(
+            raw_feedback_id=raw_feedback.id,
+            title="Test Document",
+            body="Test body",
+            author="testuser",
+            timestamp=datetime.utcnow(),
+            url="https://github.com/user/repo/issues/123"
+        )
+        test_session.add(processed_doc)
+        test_session.commit()
+        
+        # Create membership
+        membership = ClusterMembership(
+            cluster_id=cluster.id,
+            document_id=processed_doc.id,
+            similarity_score=0.9,
+            is_representative=True
+        )
+        test_session.add(membership)
+        test_session.commit()
+        
+        # Test relationships
+        assert membership.cluster == cluster
+        assert membership.document == processed_doc
+        assert membership in cluster.memberships
+        assert any(m.document == processed_doc for m in cluster.memberships)
+
+class TestPrioritizationScore:
+    """Tests for PrioritizationScore model."""
+    
+    def test_prioritization_score_creation(self, test_session):
+        """Test PrioritizationScore model creation."""
+        # Create processed document
+        raw_feedback = RawFeedback(
+            source_type=SourceType.GITHUB_ISSUE,
+            source_id="12345",
+            url="https://github.com/user/repo/issues/123",
+            content="Test content",
+            timestamp=datetime.utcnow()
+        )
+        test_session.add(raw_feedback)
+        test_session.commit()
+        
+        processed_doc = ProcessedDocument(
+            raw_feedback_id=raw_feedback.id,
+            title="Test Document",
+            body="Test body",
+            author="testuser",
+            timestamp=datetime.utcnow(),
+            url="https://github.com/user/repo/issues/123"
+        )
+        test_session.add(processed_doc)
+        test_session.commit()
+        
+        # Create prioritization score
+        score = PrioritizationScore(
+            document_id=processed_doc.id,
+            severity_score=0.8,
+            reach_score=0.6,
+            recency_score=0.9,
+            persona_weight=0.7,
+            priority_score=0.75,
+            priority_level=PriorityLevel.HIGH,
+            is_revenue_critical=True,
+            revenue_impact_multiplier=1.5
+        )
+        
+        test_session.add(score)
+        test_session.commit()
+        
+        assert score.id is not None
+        assert score.priority_score == 0.75
+        assert score.is_revenue_critical is True
+        assert score.priority_level == PriorityLevel.HIGH
+
+class TestTicket:
+    """Tests for Ticket model."""
+    
+    def test_ticket_creation(self, test_session):
+        """Test Ticket model creation."""
+        # Create processed document
+        raw_feedback = RawFeedback(
+            source_type=SourceType.GITHUB_ISSUE,
+            source_id="12345",
+            url="https://github.com/user/repo/issues/123",
+            content="Test content",
+            timestamp=datetime.utcnow()
+        )
+        test_session.add(raw_feedback)
+        test_session.commit()
+        
+        processed_doc = ProcessedDocument(
+            raw_feedback_id=raw_feedback.id,
+            title="Test Document",
+            body="Test body",
+            author="testuser",
+            timestamp=datetime.utcnow(),
+            url="https://github.com/user/repo/issues/123"
+        )
+        test_session.add(processed_doc)
+        test_session.commit()
+        
+        # Create ticket
+        ticket = Ticket(
+            source_document_id=processed_doc.id,
+            external_id="JIRA-123",
+            external_url="https://company.atlassian.net/browse/JIRA-123",
+            platform="jira",
+            title="Fix login issue",
+            description="Users cannot log in",
+            status=TicketStatus.OPEN,
+            priority=PriorityLevel.HIGH,
+            labels=["bug", "authentication"]
+        )
+        
+        test_session.add(ticket)
+        test_session.commit()
+        
+        assert ticket.id is not None
+        assert ticket.external_id == "JIRA-123"
+        assert ticket.status == TicketStatus.OPEN
+        assert ticket.platform == "jira"
+
+class TestAgentExecution:
+    """Tests for AgentExecution model."""
+    
+    def test_agent_execution_creation(self, test_session):
+        """Test AgentExecution model creation."""
+        execution = AgentExecution(
+            agent_name="test_agent",
+            execution_id="exec_123",
+            status="running",
+            started_at=datetime.utcnow(),
+            items_processed=10,
+            items_successful=8,
+            items_failed=2
+        )
+        
+        test_session.add(execution)
+        test_session.commit()
+        
+        assert execution.id is not None
+        assert execution.agent_name == "test_agent"
+        assert execution.status == "running"
+        assert execution.items_processed == 10
+        assert execution.items_successful == 8
+        assert execution.items_failed == 2
+
+class TestSystemConfig:
+    """Tests for SystemConfig model."""
+    
+    def test_system_config_creation(self, test_session):
+        """Test SystemConfig model creation."""
+        config = SystemConfig(
+            config_key="test_config",
+            config_value={"key": "value", "number": 42},
+            description="Test configuration",
+            version="1.0.0",
+            is_active=True
+        )
+        
+        test_session.add(config)
+        test_session.commit()
+        
+        assert config.id is not None
+        assert config.config_key == "test_config"
+        assert config.config_value == {"key": "value", "number": 42}
+        assert config.description == "Test configuration"
+        assert config.is_active is True
+
+class TestDigestReport:
+    """Tests for DigestReport model."""
+    
+    def test_digest_report_creation(self, test_session):
+        """Test DigestReport model creation."""
+        report = DigestReport(
+            report_type="hourly",
+            title="Hourly Feedback Digest",
+            content="Summary of feedback received",
+            summary="5 new issues, 3 bugs, 2 feature requests",
+            period_start=datetime.utcnow(),
+            period_end=datetime.utcnow(),
+            top_clusters=["cluster1", "cluster2"],
+            delivery_status="pending",
+            delivery_method="slack",
+            delivery_recipients=["#product-feedback"]
+        )
+        
+        test_session.add(report)
+        test_session.commit()
+        
+        assert report.id is not None
+        assert report.report_type == "hourly"
+        assert "cluster1" in report.top_clusters
+        assert report.delivery_status == "pending"
+        assert report.delivery_method == "slack"
+
+class TestDatabaseConstraints:
+    """Tests for database constraints and relationships."""
+    
+    def test_foreign_key_constraints(self, test_session):
+        """Test foreign key constraints work properly."""
+        # Test that we can create a ProcessedDocument with valid foreign key
+        raw_feedback = RawFeedback(
+            source_type=SourceType.GITHUB_ISSUE,
+            source_id="12345",
+            url="https://github.com/user/repo/issues/123",
+            content="Test content",
+            timestamp=datetime.utcnow()
+        )
+        test_session.add(raw_feedback)
+        test_session.commit()
+        
+        processed_doc = ProcessedDocument(
+            raw_feedback_id=raw_feedback.id,
+            title="Test Document",
+            body="Test body",
+            author="testuser",
+            timestamp=datetime.utcnow(),
+            url="https://github.com/user/repo/issues/123"
+        )
+        test_session.add(processed_doc)
+        test_session.commit()
+        
+        assert processed_doc.id is not None
+        assert processed_doc.raw_feedback_id == raw_feedback.id
+        assert processed_doc.raw_feedback == raw_feedback
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
